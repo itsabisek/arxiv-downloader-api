@@ -1,9 +1,0 @@
-{% extends "layout.html" %}
-{% block content %}
-    <h1>Welcome to arxiv-downloader</h1>
-    {% for paper in papers %}
-        <h1>{{ paper['Name'] }}</h1>
-        <h4>{{ paper['Authors'] }}</h4>
-        <p>{{ paper['Date Published'] }}</p>
-    {% endfor %}
-{% endblock content %}
