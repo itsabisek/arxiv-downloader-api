@@ -5,6 +5,8 @@ import threading
 import pickle
 # from tqdm.auto import tqdm
 import sys
+import os
+
 
 
 class Paper:
@@ -34,29 +36,32 @@ class GetPapers:
         self.sleep_time = sleep_time
         self.paper_id_version = {}
         self.replaceVersion = replaceVersion
+        self.missed_idx = []
 
     def start(self):
 
-        sys.stdout.write("Starting fetching papers.....\n")
+        print("Starting fetching papers.....\n")
         for index in range(self.start_index, self.max_papers, self.papers_per_call):
 
             query_string = f"search_query={self.search_query}&start={index}&sortBy=lastUpdatedDate&" \
                                                                                 f"max_results={self.papers_per_call} "
 
             final_url = self.base_url + query_string
-
+            print(final_url)
             res = requests.get(final_url)
-            if res.status_code == 200:
-                _ids,papers = self.parseResponse(res.text)
-                self._pickle_papers(papers)
-                self.paper_ids = {**self.paper_ids,**_ids}
-                sys.stdout.write(f"\r{index + 100} papers are parsed")
-            else:
-                # res = self._retry(index,final_url)
-                # if not res:
-                #     continue
-                # else:
-                pass
+            print(res.status_code)
+            if res.status_code != 200:
+                res = self._retry(final_url)
+                if not res:
+                    print(f"\nMaximum number of attempts reached. Skipping papers from {index} to {index+100}")
+                    self.missed_idx.append(index)
+                    continue
+            
+            _ids,papers = self.parseResponse(res.text)
+            self._pickle_papers(papers)
+            self.paper_ids = {**self.paper_ids,**_ids}
+            sys.stdout.write(f"\r{index + 100} papers are parsed")
+            break
 
     def parseResponse(self, response):
         papers = []
@@ -67,7 +72,7 @@ class GetPapers:
         for entry in parsed_response.entries:
             link = entry['links'][-1]['href']
             authors = [author['name'] for author in entry['authors']]
-            affiliation = entry['arxiv_affiliation']
+            affiliation = entry['affiliation']
             published_date = entry['published']
             updated_date = entry['updated']
             summary = entry['summary']
@@ -91,8 +96,30 @@ class GetPapers:
         
         return id_versions,papers
 
-    def _pickle_papers(self):
-        pass
+    def _pickle_papers(self,papers):
+        
+        if not os.path.exists('papers.db'):
+            print("No papers are serialized. Serializing...")
+            with open('papers.db','wb') as db:
+                pickle.dump(papers,db)
+        else:
+            print("Serializing papers...")
+            papers_in_db = []
+            with open('papers.db','rb') as db:
+                papers_in_db = pickle.load(db)
 
-    def _retry(self):
-        pass
+            with open('papers.db','wb') as db:
+                pickle.dump(papers_in_db.extend(papers),db)
+        
+
+    def _retry(self,final_url):
+        print("No response from server. Will try 3 more times or skip this 100 papers. You can download and parse them manually.")
+        for i in range(3):
+            sys.stdout.write(f'\rAttempt {i+1}...')
+            res = requests.get(final_url)
+
+            if res.status_code == 200:
+                print("\nSuccessful")
+                return res
+        
+        return False
