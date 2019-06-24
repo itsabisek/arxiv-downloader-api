@@ -5,6 +5,7 @@ import threading
 import pickle
 import sys
 import os
+from tqdm.auto import tqdm
 
 
 class Paper:
@@ -34,35 +35,56 @@ class GetPapers:
         self.max_papers = max_papers
         self.sleep_time = sleep_time
         self.paper_versions = {}
-        self.paper_ids = set()
+        self.available_ids = set()
+        self.papers_in_db = []
         self.replaceVersion = replace_version
         self.missed_idx = []
         self.stop_call = False
 
     def start(self):
+        
+        db = None
+        id_db = None
 
-        print("Starting fetching papers.....\n")
+        try:
+            print("Creating file for serializing papers")
+            db = open('papers.db','wb+')
 
-        while True:
-            self._fetchPapers()
-            if self.stop_call: break
-            self.start_index += self.max_papers
-            print(f"\n{self.max_papers} papers parsed. Updating them to database.")
-            time.sleep(self.sleep_time)
+            if os.path.exists('ids'):
+                with open('ids','rb') as file:
+                    self.available_ids = pickle.load(file)
 
-        print(f"All papers are parsed.")
+            print(f'Found {len(self.available_ids)} papers in database')
+
+            print("Fetching papers.....\n")
+
+            while not self.stop_call:
+                self._fetchPapers()
+                self.start_index += self.max_papers
+                time.sleep(self.sleep_time)
+        
+        except Exception as e:
+            print(e)
+        
+        finally:
+            if db != None:
+                db.close()
+            
+            print(f"\nParsed {len(self.papers_in_db)} new papers")
+
+            with open('ids', 'wb') as file:
+                pickle.dump(self.available_ids,file)
 
     def _fetchPapers(self):
-
-        for index in range(self.start_index, self.start_index + self.max_papers, self.papers_per_call):
+        
+        for index in tqdm(range(self.start_index, self.start_index + self.max_papers, self.papers_per_call)):
 
             query_string = f"search_query={self.search_query}&start={index}&sortBy=lastUpdatedDate&" \
                 f"max_results={self.papers_per_call}"
 
             final_url = self.base_url + query_string
-            # print(final_url)
+
             res = requests.get(final_url)
-            # print(res.status_code)
             if res.status_code != 200:
                 res = self._retry(final_url)
                 if not res:
@@ -71,12 +93,10 @@ class GetPapers:
                     continue
 
             versions, papers = self.parseResponse(res.text)
-            self._pickle_papers(papers)
-            self.paper_versions = {**self.paper_versions, **versions}
+            self.papers_in_db.extend(papers)
+            self.paper_versions = {**self.paper_versions,**versions}
 
-            sys.stdout.write(f"\r{index + 100} papers parsed")
-            if self.stop_call:
-                break
+            if self.stop_call: break
 
     def parseResponse(self, response):
         papers = []
@@ -94,15 +114,13 @@ class GetPapers:
             replace = self._checkIdVersion(_id, version)
 
             if not replace:
-                versions[_id] = version
+                # versions[_id] = version
                 continue
 
             authors = [author['name'] for author in entry['authors']]
-            # affiliation = entry['affiliation'] if 'affiliation' in entry.keys() else None
             published_date = entry['published']
             updated_date = entry['updated']
             summary = entry['summary']
-            # no_of_pages = int(entry['arxiv_comment'].split(' ')[0])
             title = entry['title']
 
             papers.append(Paper(_id,
@@ -115,31 +133,16 @@ class GetPapers:
                                 updated_date,
                                 self.replaceVersion))
 
-            self.paper_ids.add(_id)
+            self.available_ids.add(_id)
             versions[_id] = version
 
         return versions, papers
 
-    def _pickle_papers(self, papers):
-
-        if not os.path.exists('papers.db'):
-            print("No papers are serialized. Creating file...")
-            with open('papers.db', 'wb') as db:
-                pickle.dump(papers, db)
-        else:
-            # print("Serializing papers...")
-            papers_in_db = []
-            with open('papers.db', 'rb') as db:
-                papers_in_db = pickle.load(db)
-
-            with open('papers.db', 'ab') as db:
-                pickle.dump(papers_in_db.extend(papers), db)
-
     def _retry(self, final_url):
         print(
-            "No response from server. Will try 3 more times or skip this 100 papers. You can download and parse them manually.")
+            "\nNo response from server. Will try 3 more times or skip this 100 papers. You can download and parse them manually.")
         for i in range(3):
-            sys.stdout.write(f'\rAttempt {i + 1}...')
+            sys.stdout.write(f'\n\rAttempt {i + 1}...')
             res = requests.get(final_url)
 
             if res.status_code == 200:
@@ -149,7 +152,7 @@ class GetPapers:
         return False
 
     def _checkIdVersion(self, _id, version):
-        if _id in self.paper_ids:
+        if _id in self.available_ids:
             if version != self.paper_versions[_id] and self.replaceVersion == True:
                 return True
             else:
