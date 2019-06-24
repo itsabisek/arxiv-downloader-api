@@ -37,13 +37,46 @@ class GetPapers:
         self.paper_ids = set()
         self.replaceVersion = replace_version
         self.missed_idx = []
+        self.stop_call = False
 
     def start(self):
 
         print("Starting fetching papers.....\n")
-        
-        time.sleep(self.sleep_time)
-        print("\n10000 papers parsed. Updating them to database.")
+
+        while True:
+            self._fetchPapers()
+            if self.stop_call: break
+            self.start_index += self.max_papers
+            print(f"\n{self.max_papers} papers parsed. Updating them to database.")
+            time.sleep(self.sleep_time)
+
+        print(f"All papers are parsed.")
+
+    def _fetchPapers(self):
+
+        for index in range(self.start_index, self.start_index + self.max_papers, self.papers_per_call):
+
+            query_string = f"search_query={self.search_query}&start={index}&sortBy=lastUpdatedDate&" \
+                f"max_results={self.papers_per_call}"
+
+            final_url = self.base_url + query_string
+            # print(final_url)
+            res = requests.get(final_url)
+            # print(res.status_code)
+            if res.status_code != 200:
+                res = self._retry(final_url)
+                if not res:
+                    print(f"\nMaximum number of attempts reached. Skipping papers from {index} to {index + 100}")
+                    self.missed_idx.append(index)
+                    continue
+
+            versions, papers = self.parseResponse(res.text)
+            self._pickle_papers(papers)
+            self.paper_versions = {**self.paper_versions, **versions}
+
+            sys.stdout.write(f"\r{index + 100} papers parsed")
+            if self.stop_call:
+                break
 
     def parseResponse(self, response):
         papers = []
@@ -51,13 +84,16 @@ class GetPapers:
 
         parsed_response = feedparser.parse(response)
 
+        if len(parsed_response.entries) < self.papers_per_call:
+            self.stop_call = True
+
         for entry in parsed_response.entries:
             link = entry['links'][-1]['href']
             _id, version = link.split('/')[-1].split('v')
-        
-            replace = self._checkIdVersion(_id,version)
-            
-            if not replace : 
+
+            replace = self._checkIdVersion(_id, version)
+
+            if not replace:
                 versions[_id] = version
                 continue
 
@@ -68,7 +104,6 @@ class GetPapers:
             summary = entry['summary']
             # no_of_pages = int(entry['arxiv_comment'].split(' ')[0])
             title = entry['title']
-            
 
             papers.append(Paper(_id,
                                 title,
@@ -113,33 +148,11 @@ class GetPapers:
 
         return False
 
-    def _checkIdVersion(self,_id,version):
+    def _checkIdVersion(self, _id, version):
         if _id in self.paper_ids:
-            if version != self.paper_versions[_id] and self.replaceVersion == True: return True
-            else: return False
-    
+            if version != self.paper_versions[_id] and self.replaceVersion == True:
+                return True
+            else:
+                return False
+
         return True
-
-    def _fetchPapers(self,start_index,max_index,papers_per_call):
-        for index in range(self.start_index, self.max_papers, self.papers_per_call):
-
-            query_string = f"search_query={self.search_query}&start={index}&sortBy=lastUpdatedDate&" \
-                f"max_results={self.papers_per_call}"
-
-            final_url = self.base_url + query_string
-            # print(final_url)
-            res = requests.get(final_url)
-            # print(res.status_code)
-            if res.status_code != 200:
-                res = self._retry(final_url)
-                if not res:
-                    print(f"\nMaximum number of attempts reached. Skipping papers from {index} to {index + 100}")
-                    self.missed_idx.append(index)
-                    continue
-
-            versions, papers = self.parseResponse(res.text)
-            self._pickle_papers(papers)
-            self.paper_versions = {**self.paper_versions, **versions}
-
-            sys.stdout.write(f"\r{index+100} papers parsed")
-            
