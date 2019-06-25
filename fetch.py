@@ -5,7 +5,7 @@ import threading
 import pickle
 import sys
 import os
-from tqdm.auto import tqdm
+import traceback as tb
 
 
 class Paper:
@@ -27,11 +27,11 @@ class Paper:
 
 class ArxivDl:
 
-    def __init__(self, papers_per_call=1000, sleep_time=5, max_papers=10000, replace_version=True):
+    def __init__(self, start_index = 0,papers_per_call=100, sleep_time=5, max_papers=10000, replace_version=True):
         self.base_url = 'http://export.arxiv.org/api/query?'
         self.search_query = 'cat:cs.CV+OR+cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL+OR+cat:cs.NE+OR+cat:stat.ML'
         self.papers_per_call = papers_per_call
-        self.start_index = 0
+        self.start_index = start_index
         self.max_papers = max_papers
         self.sleep_time = sleep_time
         self.paper_versions = {}
@@ -45,7 +45,7 @@ class ArxivDl:
 
         db = None
         try:
-            print("Creating file for serializing papers")
+            print("\nCreating file for serializing papers")
             db = open('papers.db', 'wb+')
 
             if os.path.exists('metadata'):
@@ -53,30 +53,32 @@ class ArxivDl:
                     self.paper_versions = pickle.load(file)
                     self.available_ids = set(self.paper_versions.keys())
 
-            print(f'Found {len(self.available_ids)} papers in database')
+            print(f'\nFound {len(self.available_ids)} papers in database')
 
-            print("Fetching papers.....\n")
+            print("\nFetching papers.....\n")
 
             while not self.stop_call:
                 self._fetchPapers()
                 self.start_index += self.max_papers
-                time.sleep(self.sleep_time)
+                time.sleep(60)
 
-        except Exception as e:
-            print(e)
+        except Exception:
+            tb.print_exc()
 
         finally:
             if db is not None:
+                pickle.dump(self.papers_in_db,db)
                 db.close()
 
             print(f"\nParsed {len(self.papers_in_db)} new papers")
 
             with open('metadata', 'wb') as file:
                 pickle.dump(self.paper_versions, file)
+            
 
     def _fetchPapers(self):
 
-        for index in tqdm(range(self.start_index, self.start_index + self.max_papers, self.papers_per_call)):
+        for index in range(self.start_index, self.start_index + self.max_papers, self.papers_per_call):
 
             query_string = f"search_query={self.search_query}&start={index}&sortBy=lastUpdatedDate&" \
                 f"max_results={self.papers_per_call}"
@@ -87,26 +89,30 @@ class ArxivDl:
             if res.status_code != 200:
                 res = self._retry(final_url)
                 if not res:
-                    print(f"\nMaximum number of attempts reached. Skipping papers from {index} to {index + 100}")
+                    print(f"\nMaximum number of attempts reached. Skipping papers from {index} to {index + self.papers_per_call}")
                     self.missed_idx.append(index)
                     continue
-
+            
             versions, papers = self.parseResponse(res.text)
             self.papers_in_db.extend(papers)
             self.paper_versions = {**self.paper_versions, **versions}
 
+            sys.stdout.write(f"\rFetched {len(papers)} from index {index} to {index+self.papers_per_call}")
             time.sleep(self.sleep_time)
-            if self.stop_call: break
+
+            if self.stop_call: 
+                print(f"Arxiv may be rate limiting! Retry after sometime from index {index}")
+                break
 
     def parseResponse(self, response):
         papers = []
         versions = {}
 
         parsed_response = feedparser.parse(response)
-
+        
         if len(parsed_response.entries) < self.papers_per_call:
-            print(f'\nGot {len(parsed_response.entries)} papers insted of {self.papers_per_call} papers. Will be '
-                  f'terminating in next iteration')
+            print(f'\n\nGot {len(parsed_response.entries)} papers insted of {self.papers_per_call} papers. Will be '
+                  f'terminating in next iteration.')
             self.stop_call = True
 
         for entry in parsed_response.entries:
