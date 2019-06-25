@@ -25,9 +25,9 @@ class Paper:
         self.no_of_pages = no_of_pages
 
 
-class GetPapers:
+class ArxivDl:
 
-    def __init__(self, papers_per_call=100, sleep_time=5, max_papers=10000, replace_version=True):
+    def __init__(self, papers_per_call=1000, sleep_time=5, max_papers=10000, replace_version=True):
         self.base_url = 'http://export.arxiv.org/api/query?'
         self.search_query = 'cat:cs.CV+OR+cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL+OR+cat:cs.NE+OR+cat:stat.ML'
         self.papers_per_call = papers_per_call
@@ -42,17 +42,16 @@ class GetPapers:
         self.stop_call = False
 
     def start(self):
-        
-        db = None
-        id_db = None
 
+        db = None
         try:
             print("Creating file for serializing papers")
-            db = open('papers.db','wb+')
+            db = open('papers.db', 'wb+')
 
-            if os.path.exists('ids'):
-                with open('ids','rb') as file:
-                    self.available_ids = pickle.load(file)
+            if os.path.exists('metadata'):
+                with open('metadata', 'rb') as file:
+                    self.paper_versions = pickle.load(file)
+                    self.available_ids = set(self.paper_versions.keys())
 
             print(f'Found {len(self.available_ids)} papers in database')
 
@@ -62,21 +61,21 @@ class GetPapers:
                 self._fetchPapers()
                 self.start_index += self.max_papers
                 time.sleep(self.sleep_time)
-        
+
         except Exception as e:
             print(e)
-        
+
         finally:
-            if db != None:
+            if db is not None:
                 db.close()
-            
+
             print(f"\nParsed {len(self.papers_in_db)} new papers")
 
-            with open('ids', 'wb') as file:
-                pickle.dump(self.available_ids,file)
+            with open('metadata', 'wb') as file:
+                pickle.dump(self.paper_versions, file)
 
     def _fetchPapers(self):
-        
+
         for index in tqdm(range(self.start_index, self.start_index + self.max_papers, self.papers_per_call)):
 
             query_string = f"search_query={self.search_query}&start={index}&sortBy=lastUpdatedDate&" \
@@ -94,8 +93,9 @@ class GetPapers:
 
             versions, papers = self.parseResponse(res.text)
             self.papers_in_db.extend(papers)
-            self.paper_versions = {**self.paper_versions,**versions}
+            self.paper_versions = {**self.paper_versions, **versions}
 
+            time.sleep(self.sleep_time)
             if self.stop_call: break
 
     def parseResponse(self, response):
@@ -105,6 +105,8 @@ class GetPapers:
         parsed_response = feedparser.parse(response)
 
         if len(parsed_response.entries) < self.papers_per_call:
+            print(f'\nGot {len(parsed_response.entries)} papers insted of {self.papers_per_call} papers. Will be '
+                  f'terminating in next iteration')
             self.stop_call = True
 
         for entry in parsed_response.entries:

@@ -1,4 +1,4 @@
-from fetch import GetPapers
+from fetch import ArxivDl
 
-papers = GetPapers()
+papers = ArxivDl()
 papers.start()
