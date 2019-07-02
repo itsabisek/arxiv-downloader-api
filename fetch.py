@@ -25,23 +25,22 @@ class ArxivDl:
         self.stop_call = False
 
     def start(self):
-
-        db = None
         try:
-            print("\nSearching if database exists:")
-            # db = open('papers.db', 'wb+')
+            print("\nSearching for metadata")
 
             if os.path.exists('metadata'):
                 with open('metadata', 'rb') as file:
                     self.paper_versions = pickle.load(file)
                     self.available_ids = set(self.paper_versions.keys())
 
-            print(f'\nFound {len(self.available_ids)} papers in database')
+            print(f'Found {len(self.available_ids)} papers in database')
 
-            print("\nFetching papers.....\n")
+            print(f"\nFetching papers from index {self.start_index}.....\n")
 
-            while not self.stop_call:
+            while True:
                 self._fetchPapers()
+                if self.stop_call:
+                    break
                 self.start_index += self.max_papers
                 time.sleep(60)
 
@@ -49,14 +48,12 @@ class ArxivDl:
             tb.print_exc()
 
         finally:
-            if db is not None:
-                pickle.dump(self.papers_in_db, db)
-                db.close()
-
             print(f"\nParsed {len(self.papers_in_db)} new papers")
 
             with open('metadata', 'wb') as file:
                 pickle.dump(self.paper_versions, file)
+
+            return self.start_index, self.papers_in_db
 
     def _fetchPapers(self):
 
@@ -77,15 +74,21 @@ class ArxivDl:
                     continue
 
             versions, papers = self.parseResponse(res.text)
+            sys.stdout.write(f"\rFetched {len(papers)} from index {index} to {index + self.papers_per_call}")
+
+            if len(papers) < self.papers_per_call:
+                print(f'\nFound {len(papers)} papers. Arxiv may be rate limiting.'
+                      f'Will go to sleep for 3 minutes. Start from index {index}')
+                self.stop_call = True
+
             self.papers_in_db.extend(papers)
             self.paper_versions = {**self.paper_versions, **versions}
 
-            sys.stdout.write(f"\rFetched {len(papers)} from index {index} to {index + self.papers_per_call}")
-            time.sleep(self.sleep_time)
-
             if self.stop_call:
-                print(f"Arxiv may be rate limiting! Retry after sometime from index {index}")
+                self.start_index = index
                 break
+
+            time.sleep(self.sleep_time)
 
     def parseResponse(self, response):
         papers = []
@@ -93,10 +96,8 @@ class ArxivDl:
 
         parsed_response = feedparser.parse(response)
 
-        if len(parsed_response.entries) < self.papers_per_call:
-            print(f'\n\nGot {len(parsed_response.entries)} papers instead of {self.papers_per_call} papers. Will be '
-                  f'terminating in next iteration.')
-            self.stop_call = True
+        if len(parsed_response.entries) == 0:
+            return versions, papers
 
         for entry in parsed_response.entries:
             link = entry['links'][-1]['href']
@@ -114,7 +115,7 @@ class ArxivDl:
             summary = entry['summary']
             title = entry['title']
 
-            papers.append({'_id': _id,
+            papers.append({'paper_id': _id,
                            'title': title,
                            'version': int(version),
                            'summary': summary,
@@ -129,8 +130,6 @@ class ArxivDl:
         return versions, papers
 
     def _retry(self, final_url):
-        print(
-            "\nNo response from server. Will try 3 more times or skip this 100 papers. You can download and parse them manually.")
         for i in range(3):
             sys.stdout.write(f'\n\rAttempt {i + 1}...')
             res = requests.get(final_url)
@@ -149,3 +148,6 @@ class ArxivDl:
                 return False
 
         return True
+
+    def getPapers(self):
+        return self.papers_in_db
