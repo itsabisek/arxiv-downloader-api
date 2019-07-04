@@ -10,7 +10,7 @@ from datetime import datetime
 
 class ArxivDl:
 
-    def __init__(self, start_index=0, papers_per_call=100, sleep_time=5, max_papers=10000, replace_version=True):
+    def __init__(self, start_index=0, papers_per_call=1000, sleep_time=5, max_papers=10000, replace_version=True):
         self.base_url = 'http://export.arxiv.org/api/query?'
         self.search_query = 'cat:cs.CV+OR+cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL+OR+cat:cs.NE+OR+cat:stat.ML'
         self.papers_per_call = papers_per_call
@@ -76,15 +76,14 @@ class ArxivDl:
             versions, papers = self.parseResponse(res.text)
             sys.stdout.write(f"\rFetched {len(papers)} from index {index} to {index + self.papers_per_call}")
 
-            if len(papers) < self.papers_per_call:
-                print(f'\nFound {len(papers)} papers. Arxiv may be rate limiting.'
-                      f'Will go to sleep for 3 minutes. Start from index {index}')
-                self.stop_call = True
+            # if len(papers) < self.papers_per_call:
 
             self.papers_in_db.extend(papers)
             self.paper_versions = {**self.paper_versions, **versions}
 
             if self.stop_call:
+                print(f'\nFound 0 papers. Arxiv may be rate limiting.'
+                      f'Will go to sleep for 3 minutes. Start from index {index}')
                 self.start_index = index
                 break
 
@@ -97,7 +96,7 @@ class ArxivDl:
         parsed_response = feedparser.parse(response)
 
         if len(parsed_response.entries) == 0:
-            return versions, papers
+            self.stop_call = True
 
         for entry in parsed_response.entries:
             link = entry['links'][-1]['href']
