@@ -10,9 +10,11 @@ from datetime import datetime
 
 class ArxivDl:
 
-    def __init__(self, start_index=0, papers_per_call=1000, sleep_time=5, max_papers=10000, replace_version=True):
+    def __init__(self, search_query, start_index=0, papers_per_call=1000, sleep_time=15, max_papers=10000,
+                 replace_version=True):
         self.base_url = 'http://export.arxiv.org/api/query?'
-        self.search_query = 'cat:cs.CV+OR+cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL+OR+cat:cs.NE+OR+cat:stat.ML'
+        # self.search_query = 'cat:cs.CV+OR+cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL+OR+cat:cs.NE+OR+cat:stat.ML'
+        self.search_query = search_query
         self.papers_per_call = papers_per_call
         self.start_index = start_index
         self.max_papers = max_papers

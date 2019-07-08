@@ -1,29 +1,12 @@
 import pickle
 from fetch import ArxivDl
-import argparse
+import dns
 import time
 import traceback as tb
 from pymongo import MongoClient
 import dbUtils
 import sys, select
 
-
-# parser = argparse.ArgumentParser()
-# parser.add_argument('--startIndex', type= int ,help='provide index to start from in case your last request was rate limited')
-# args = parser.parse_args()
-# start_index = 0
-#
-# if args.startIndex is not None:
-#     start_index = args.startIndex
-#
-# stop = False
-#
-#
-# while not stop:
-#     papers = ArxivDl(start_index=start_index)
-#     stop,start_index = papers.start()
-#     print("\nSleeping")
-#     time.sleep(60)
 def update_to_db(papers):
 
     global client
@@ -44,7 +27,7 @@ if __name__ == "__main__":
     start_index = 0
     backup_papers = []
     try:
-        client = MongoClient('localhost', 27017)
+        client = MongoClient('mongodb+srv://abisekmishra:<password>@cluster0-fiaze.mongodb.net/test?retryWrites=true&w=majority')
         db = client.get_database('arxivdl')
         collection = db['papers']
 
@@ -67,6 +50,6 @@ if __name__ == "__main__":
     finally:
         if client is not None:
             client.close()
-
-        with open('backup_papers.backup', 'wb') as file:
-            pickle.dump(backup_papers, file)
+        if len(backup_papers) != 0:
+            with open('backup_papers.backup', 'wb') as file:
+                pickle.dump(backup_papers, file)
