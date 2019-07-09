@@ -10,7 +10,7 @@ with open('categories', 'rb') as file:
 for category in categories.keys():
 
     papers_to_save = []
-    start_index = 0
+    start_index = 18000
     counter = 0
 
     print(f"\nFetching papers from {categories[category]}......")
@@ -26,8 +26,8 @@ for category in categories.keys():
             counter = 0
 
         if counter != 10:
-            print(f"\nCurrently {len(papers)} papers fetched. Will continue after 10 minutes")
-            time.sleep(600)
+            print(f"\nCurrently {len(papers)} papers fetched. Will continue after {counter+1} minutes")
+            time.sleep(counter+1 * 60)
             continue
         break
 
