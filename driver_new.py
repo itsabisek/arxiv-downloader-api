@@ -10,7 +10,7 @@ with open('categories', 'rb') as file:
 for category in categories.keys():
 
     papers_to_save = []
-    start_index = 18000
+    start_index = 17000
     counter = 0
 
     print(f"\nFetching papers from {categories[category]}......")

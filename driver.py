@@ -6,6 +6,7 @@ import traceback as tb
 from pymongo import MongoClient
 import dbUtils
 import sys, select
+import urllib
 
 def update_to_db(papers):
 
@@ -27,7 +28,7 @@ if __name__ == "__main__":
     start_index = 0
     backup_papers = []
     try:
-        client = MongoClient('mongodb+srv://abisekmishra:<password>@cluster0-fiaze.mongodb.net/test?retryWrites=true&w=majority')
+        client = MongoClient('mongodb+srv://{}:{}@cluster0-fiaze.mongodb.net/test?retryWrites=true&w=majority'.format('abisekmishra','Avisek@4326'))
         db = client.get_database('arxivdl')
         collection = db['papers']
 
