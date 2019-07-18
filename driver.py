@@ -28,7 +28,7 @@ if __name__ == "__main__":
     start_index = 0
     backup_papers = []
     try:
-        client = MongoClient('mongodb+srv://{}:{}@cluster0-fiaze.mongodb.net/test?retryWrites=true&w=majority'.format('abisekmishra','Avisek@4326'))
+        client = MongoClient('mongodb+srv://{}:{}@cluster0-fiaze.mongodb.net/test?authSource=admin&retryWrites=true&w=majority'.format('abisekmishra','Avisek@4326'))
         db = client.get_database('arxivdl')
         collection = db['papers']
 

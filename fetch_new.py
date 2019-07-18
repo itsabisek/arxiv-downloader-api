@@ -29,17 +29,22 @@ class Parser:
 
     def start(self, start_index=0):
         start_index = start_index
-        username = quote_plus("abisekmishra")
-        password = quote_plus("Avisek@4326")
-        mongo_string = 'mongodb+srv://%s:%s@cluster0-fiaze.mongodb.net/test?retryWrites=true&w=majority' % (
+        username = quote_plus("abisek")
+        password = quote_plus("abisek24")
+        mongo_string = 'mongodb+srv://%s:%s@cluster0-fiaze.mongodb.net/arxivdl?authSource=admin&retryWrites=true&w=majority' % (
             username, password)
 
         print("Initiating database connection")
         self.connection = mongo.MongoClient(mongo_string)
         print("Connection Established. Fetching metadata...")
-        collection = self.connection.get_database('arxivdb').get_collection('metadata')
+        metadata = self.connection.get_database('arxivdb').get_collection('metadata')
 
         # TODO:Get metadata here
+        cursor = metadata.find()
+        print(f"Found {cursor.count()} in database")
+        for entry in cursor:
+            self.available_ids.add(entry['paper_id'])
+            self.paper_versions[entry['paper_id']] = entry['paper_version']
 
         while True:
             papers = self.fetch(start_index)
