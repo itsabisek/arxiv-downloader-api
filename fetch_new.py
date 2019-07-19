@@ -1,10 +1,7 @@
 import requests
 import feedparser
 import time
-import pickle
 import sys
-import os
-import traceback as tb
 from datetime import datetime
 import pymongo as mongo
 from urllib.parse import quote_plus
@@ -31,15 +28,14 @@ class Parser:
         start_index = start_index
         username = quote_plus("abisek")
         password = quote_plus("abisek24")
-        mongo_string = 'mongodb+srv://%s:%s@cluster0-fiaze.mongodb.net/arxivdl?authSource=admin&retryWrites=true&w=majority' % (
-            username, password)
+        mongo_string = 'mongodb+srv://%s:%s@cluster0-fiaze.mongodb.net/arxivdl?authSource=admin&retryWrites=true&w' \
+                       '=majority' % (username, password)
 
-        print("Initiating database connection")
+        print("Initializing database connection")
         self.connection = mongo.MongoClient(mongo_string)
         print("Connection Established. Fetching metadata...")
         metadata = self.connection.get_database('arxivdb').get_collection('metadata')
 
-        # TODO:Get metadata here
         cursor = metadata.find()
         print(f"Found {cursor.count()} in database")
         for entry in cursor:
@@ -48,41 +44,49 @@ class Parser:
 
         while True:
             papers = self.fetch(start_index)
+            print(f"{len(papers)} fetched. Index : {start_index}")
 
-            if len(papers) == 0 and self.counter != 0:
-                self.counter -= 1
-                self.pause()
-                continue
-            else:
-                print("Max attempts reached. Stopping....")
-                return
+            if len(papers) == 0:
+                if self.counter != 0:
+                    self.counter -= 1
+                    self.pause()
+                    continue
+                else:
+                    print("Max attempts reached. Stopping....")
+                    return
 
             if len(papers) < self.papers_per_call:
-                print(f"Got less than {self.papers_per_call}.Stopping....")
-                return
+                if self.counter != 0:
+                    self.counter -= 1
+                    print(f"Got less than {self.papers_per_call}.Pausing....")
+                    self.pause()
+                    continue
+                else:
+                    print("No more papers to fetch. Stopping....")
+                    self.papers_in_db.extend(papers)
+                    return
 
-            sys.stdout.write(f"\n\r{len(papers)} fetched. Index : {start_index}")
-            start_index += len(papers)
             self.papers_in_db.extend(papers)
+            start_index += self.papers_per_call
 
             if self.counter != 10:
                 self.counter = 10
 
     def fetch(self, start_index):
         base_url = self.base_url
-        query_string = f'search_query=cat:{self.category}&start={start_index}&sortBy=lastUpdatedDate&" \
-                f"max_results={self.papers_per_call}'
+        query_string = f"search_query=cat:{self.category}&start={start_index}&sortBy=lastUpdatedDate&" \
+            f"max_results={self.papers_per_call}"
         final_url = base_url + query_string
 
-        response = requests.get(final_url).text
+        # print(final_url)
+        response = requests.get(final_url)
         if response.status_code != 200:
             raise InvalidResponse("Got 404 Status Code")
 
-        return self.parse(response)
+        return self.parse(response.text)
 
     def parse(self, response):
         papers = []
-
         parsed_response = feedparser.parse(response)
 
         if len(parsed_response.entries) == 0:
@@ -115,30 +119,42 @@ class Parser:
 
         return papers
 
-    def getPapers(self):
-        pass
-
     def updateToDb(self):
-        # TODO: Write the code to enter all the extracted papers to db here
-        self.updated = True
+        if len(self.papers_in_db) != 0:
+            papers = self.connection.get_database('arxivdl').get_collection('papers')
+            results = papers.insert_many(self.papers_in_db)
+            print(f"Updated {len(results.inserted_ids)}")
+            self.updated = True
+
+    def update_metadata(self):
+        if self.connection is not None:
+            if len(self.paper_versions) != 0:
+                metadata = self.connection.get_database('arxivdl').get_collection('metadata')
+                data = [{'paper_id': paper_id, 'paper_version': paper_version} for paper_id, paper_version in
+                        self.paper_versions.items()]
+                results = metadata.insert_many(data)
 
     def pause(self):
-        print("Fetching Paused due to rate limiting.Sleeping for 10 minutes")
-        minutes = 10
+        print(f"Fetching Paused due to rate limiting.Sleeping for {self.counter} minutes")
+        minutes = self.counter
         seconds = 0
         while minutes != -1:
-            sys.stdout.write(f"\n\r{minutes:02d}:{seconds:02d}")
+            print("\n")
+            sys.stdout.write(f"\rTime left : {minutes:02d}:{seconds:02d}")
             time.sleep(1)
             if seconds == 0:
                 minutes -= 1
                 seconds = 59
             else:
                 seconds -= 1
+        print("\n")
 
     def stop(self):
-        if self.updated is False and input("You have not updated the papers.Do you want to stop parsing?") != 'n':
-            if self.connection is not None:
-                self.connection.close()
+        print('Updating metadata to database')
+        self.update_metadata()
+        print("Closing database connections")
+        if self.connection is not None:
+            self.connection.close()
 
 
 class InvalidResponse(Exception):
