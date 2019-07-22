@@ -46,29 +46,7 @@ class Parser:
             print(f"Index: {start_index}", end=" ")
             insert_papers, update_papers, pause = self.fetch(start_index)
             total_papers = len(insert_papers) + len(update_papers)
-            # print(f"{total_papers} fetched. Index : {start_index}")
             time.sleep(5)
-
-            # if total_papers == 0 and not self.stop_call:
-            #     if self.counter > 0:
-            #         self.pause()
-            #         continue
-            #     else:
-            #         print("Max attempts reached. Stopping....")
-            #         return
-            #
-            # elif total_papers < self.papers_per_call and not self.stop_call:
-            #     if self.counter > 0:
-            #         print(f"Got less than {self.papers_per_call}.Pausing....")
-            #         self.pause(1)
-            #         self.insert_papers.extend(insert_papers)
-            #         self.update_papers = {**self.update_papers, **update_papers}
-            #         continue
-            #     else:
-            #         print("No more papers to fetch. Stopping....")
-            #         self.insert_papers.extend(insert_papers)
-            #         self.update_papers = {**self.update_papers, **update_papers}
-            #         return
 
             if pause and not self.stop_call:
                 if self.counter > 0:
@@ -91,7 +69,6 @@ class Parser:
             f"max_results={self.papers_per_call}"
         final_url = base_url + query_string
 
-        # print(final_url)
         response = requests.get(final_url)
         if response.status_code != 200:
             raise InvalidResponse("Got 404 Status Code")
@@ -120,7 +97,6 @@ class Parser:
 
             if paper_id in self.available_ids:
                 if int(paper_version) <= self.paper_versions[paper_id]:
-                    # print(f'Paper Found Skipping.indbcounter:{indbcounter}')
                     indb += 1
                     continue
                 else:
@@ -182,14 +158,6 @@ class Parser:
             self.updated = True
         print(f"Updated {updated_papers} papers in database")
 
-    # def update_metadata(self):
-    #     if self.connection is not None:
-    #         if len(self.paper_versions) != 0:
-    #             self.connection.arxivdl.metadata.drop()
-    #             metadata = self.connection.arxivdl.metadata
-    #             data = [{'paper_id': paper_id, 'latest_version': paper_version} for paper_id, paper_version in
-    #                     self.paper_versions.items()]
-    #             results = metadata.insert_many(data)
 
     def pause(self, counter=None):
         if not counter:
@@ -209,8 +177,6 @@ class Parser:
         print("\n")
 
     def stop(self):
-        # print('Updating metadata to database')
-        # self.update_metadata()
         print("Closing database connections\n")
         if self.connection is not None:
             self.connection.close()

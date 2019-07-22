@@ -6,9 +6,6 @@ from pymongo.bulk import BulkWriteError
 with open('categories', 'rb') as file:
     categories = pickle.load(file)
 
-
-# categories = {"stat.ME":"Methodology",'stat.ML':"Machine Learning",'stat.TH':"Statistics Theory",'eess.AS':"Audio and Speech Processing",'eess.IV':"Image and Video Processing",'eess.SP':"Signal Processing"}
-
 parser = None
 try:
     for tag, name in categories.items():
@@ -36,7 +33,7 @@ finally:
     if parser.updated is False:
         parser.updateToDb()
     parser.stop()
-#
+
 # parser = Parser('cs.ML')
 # try:
 #     parser.start()
