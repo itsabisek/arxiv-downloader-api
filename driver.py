@@ -1,4 +1,4 @@
-from fetch_new import Parser, InvalidResponse
+from fetch import Parser, InvalidResponse
 import pickle
 import traceback as tb
 from pymongo.bulk import BulkWriteError
