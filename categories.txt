@@ -1,0 +1,48 @@
+cs.AI	Artificial Intelligence
+cs.AR	Hardware Architecture
+cs.CC	Computational Complexity
+cs.CG	Computational Geometry
+cs.CL	Computation and Language
+cs.CR	Cryptography and Security
+cs.CV	Computer Vision and Pattern Recognition
+cs.DB	Databases
+cs.DC	Distributed, Parallel, and Cluster Computing
+cs.DL	Digital Libraries
+cs.DM	Discrete Mathematics
+cs.DS	Data Structures and Algorithms
+cs.FL	Formal Languages and Automata Theory
+cs.GR	Graphics
+cs.GT	Computer Science and Game Theory
+cs.HC	Human-Computer Interaction
+cs.IR	Information Retrieval
+cs.IT	Information Theory
+cs.LG	Learning
+cs.LO	Logic in Computer Science
+cs.MA	Multiagent Systems
+cs.MM	Multimedia
+cs.MS	Mathematical Software
+cs.NA	Numerical Analysis
+cs.NE	Neural and Evolutionary Computing
+cs.NI	Networking and Internet Architecture
+cs.OS	Operating Systems
+cs.PL	Programming Languages
+cs.RO	Robotics
+cs.SC	Symbolic Computation
+cs.SE	Software Engineering
+cs.SY	Systems and Control
+q-bio.BM	Biomolecules
+q-bio.CB	Cell Behavior
+q-bio.GN	Genomics
+q-bio.MN	Molecular Networks
+q-bio.NC	Neurons and Cognition
+q-bio.PE	Populations and Evolution
+q-bio.SC	Subcellular Processes
+q-bio.TO	Tissues and Organs
+stat.AP	Applications
+stat.CO	Computation
+stat.ME	Methodology
+stat.ML	Machine Learning
+stat.TH	Statistics Theory
+eess.AS	Audio and Speech Processing
+eess.IV	Image and Video Processing
+eess.SP	Signal Processing

@@ -3,8 +3,11 @@ import pickle
 import traceback as tb
 from pymongo.bulk import BulkWriteError
 
-with open('categories', 'rb') as file:
-    categories = pickle.load(file)
+categories = {}
+with open('categories.txt', 'r') as file:
+    data = file.read()
+    for category in data.split("\n"):
+        categories[category.split("\t")[0]] = category.split("\t")[-1]
 
 parser = None
 try:

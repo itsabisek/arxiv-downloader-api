@@ -26,8 +26,11 @@ class Parser:
 
     def start(self, start_index=0):
         start_index = start_index
-        username = quote_plus("abisek")
-        password = quote_plus("abisek24")
+        with open('creds.txt', 'r') as cred:
+            data = cred.read()
+            username = quote_plus(data.split("\n")[0])
+            password = quote_plus(data.split("\n")[1])
+
         mongo_string = 'mongodb+srv://%s:%s@cluster0-fiaze.mongodb.net/arxivdl?authSource=admin&retryWrites=true&w' \
                        '=majority' % (username, password)
 
@@ -36,12 +39,13 @@ class Parser:
         print("Connection Established. Fetching metadata...")
         metadata = self.connection.arxivdl.papers
 
-        cursor = metadata.find()
+        cursor = metadata.find({'tags': self.category})
         print(f"Found {cursor.count()} entries in database")
         for entry in cursor:
             self.available_ids.add(entry['paper_id'])
             self.paper_versions[entry['paper_id']] = entry['latest_version']
 
+        print("Starting")
         while not self.stop_call:
             print(f"Index: {start_index}", end=" ")
             insert_papers, update_papers, pause = self.fetch(start_index)
@@ -157,7 +161,6 @@ class Parser:
         if updated_papers > 0:
             self.updated = True
         print(f"Updated {updated_papers} papers in database")
-
 
     def pause(self, counter=None):
         if not counter:
