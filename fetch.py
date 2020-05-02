@@ -1,189 +1,127 @@
 import requests
 import feedparser
-import time
-import sys
 from datetime import datetime
-import pymongo as mongo
-from urllib.parse import quote_plus
+from timer_utils import Timer
+from redis_utils import RedisHelper
+from logger_utils import bootstrap_logger
+
+fetch_logger = bootstrap_logger(__name__)
+
+BASE_URL = 'http://export.arxiv.org/api/query?'
 
 
-class Parser:
+def fetch_wrapper(categories, start_index=0, papers_per_call=1000):
+    category_list = [categories] if isinstance(categories, str) else categories
+    join_string = "+OR+"
+    cat_string = join_string.join(
+        ['cat:' + category for category in category_list])
 
-    def __init__(self, category, start_index=0, papers_per_call=1000, retry=5, replace_version=True):
-        self.base_url = 'http://export.arxiv.org/api/query?'
-        # self.search_query = 'cat:cs.CV+OR+cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL+OR+cat:cs.NE+OR+cat:stat.ML'
-        self.category = category
-        self.papers_per_call = papers_per_call
-        self.start_index = start_index
-        self.available_ids = set()
-        self.insert_papers = []
-        self.update_papers = {}
-        self.paper_versions = {}
-        self.counter = retry
-        self.connection = None
-        self.updated = False
-        self.stop_call = False
+    response = fetch(cat_string, start_index, papers_per_call)
+    return get_parsed_response(response.text, papers_per_call)
 
-    def start(self, start_index=0):
-        start_index = start_index
-        with open('creds.txt', 'r') as cred:
-            data = cred.read()
-            username = quote_plus(data.split("\n")[0])
-            password = quote_plus(data.split("\n")[1])
 
-        mongo_string = 'mongodb+srv://%s:%s@cluster0-fiaze.mongodb.net/arxivdl?authSource=admin&retryWrites=true&w' \
-                       '=majority' % (username, password)
-
-        print("Initializing database connection")
-        self.connection = mongo.MongoClient(mongo_string)
-        print("Connection Established. Fetching metadata...")
-        metadata = self.connection.arxivdl.papers
-
-        cursor = metadata.find({'tags': self.category})
-        print(f"Found {cursor.count()} entries in database")
-        for entry in cursor:
-            self.available_ids.add(entry['paper_id'])
-            self.paper_versions[entry['paper_id']] = entry['latest_version']
-
-        print("Starting")
-        while not self.stop_call:
-            print(f"Index: {start_index}", end=" ")
-            insert_papers, update_papers, pause = self.fetch(start_index)
-            total_papers = len(insert_papers) + len(update_papers)
-            time.sleep(5)
-
-            if pause and not self.stop_call:
-                if self.counter > 0:
-                    self.pause()
-
-                else:
-                    print("Maximum attempts reached.Stopping")
-                    return
-            else:
-                start_index += self.papers_per_call
-
-            if len(insert_papers) != 0:
-                self.insert_papers.extend(insert_papers)
-            if len(update_papers) != 0:
-                self.update_papers = {**self.update_papers, **update_papers}
-
-    def fetch(self, start_index):
-        base_url = self.base_url
-        query_string = f"search_query=cat:{self.category}&start={start_index}&sortBy=lastUpdatedDate&" \
-            f"max_results={self.papers_per_call}"
-        final_url = base_url + query_string
-
-        response = requests.get(final_url)
+def fetch(category_string, start_index, papers_per_call):
+    response = None
+    base_url = BASE_URL
+    query_string = f"search_query={category_string}&start={start_index}&sortBy=lastUpdatedDate&max_results={papers_per_call}"
+    raw_url = base_url+query_string
+    fetch_logger.info(f"Fetching data for url - {raw_url}")
+    try:
+        response = requests.get(raw_url)
         if response.status_code != 200:
-            raise InvalidResponse("Got 404 Status Code")
+            return Exception(f"Could not fetch data from url {raw_url}")
+        return response
+    except Exception as e:
+        fetch_logger.exception(e)
 
-        return self.parse(response.text)
 
-    def parse(self, response):
-        pause = False
-        update = 0
-        indb = 0
-        insert_papers = []
-        update_papers = {}
-        parsed_response = feedparser.parse(response)
+def get_parsed_response(response, papers_per_call):
+    try:
+        response = feedparser.parse(response)
+        stop_fetch = False
+        pause_fetch = False
+        if len(response.entries) == 0:
+            pause_fetch = True
+        if len(response.entries) < papers_per_call and len(response.entries) > 0:
+            stop_fetch = True
+        fetch_logger.info(f"Fetched {len(response.entries)} entries")
+        return response, pause_fetch, stop_fetch
+    except Exception as e:
+        fetch_logger.exception(e)
 
-        if len(parsed_response.entries) == 0:
-            return insert_papers, update_papers, True
 
-        if len(parsed_response.entries) < self.papers_per_call:
-            pause = True
+def parse_wrapper(response_buffer, redis_helper=None, replace_version=True):
+    if not redis_helper:
+        redis_helper = RedisHelper()
+    if not isinstance(response_buffer, list):
+        response_buffer = [response_buffer]
+    commit_buffer = []
+    try:
+        for response in response_buffer:
+            paper_versions = redis_helper.get_paper_versions_from_redis()
+            temp_commit_buffer, versions_buffer = parse(
+                response, paper_versions, replace_version)
+            commit_buffer.extend(temp_commit_buffer)
+            redis_helper.update_paper_versions(versions_buffer)
+        fetch_logger.info(f"Commit Buffer length = {len(commit_buffer)}")
+        return commit_buffer
+    except Exception as e:
+        fetch_logger.exception(e)
 
-        for entry in parsed_response.entries:
-            home_link = entry['links'][0]['href']
-            pdf_link = entry['links'][-1]['href']
-            paper_id, paper_version = pdf_link.split('/')[-1].split('v')
-            updated_date = datetime.strptime(entry['updated'], '%Y-%m-%dT%H:%M:%SZ')
 
-            if paper_id in self.available_ids:
-                if int(paper_version) <= self.paper_versions[paper_id]:
-                    indb += 1
-                    continue
-                else:
-                    update_papers[paper_id] = {'latest_version': int(paper_version), 'updated_date': updated_date,
-                                               'pdf': pdf_link.strip(), 'home': home_link.strip()}
-                    self.paper_versions[paper_id] = int(paper_version)
-                    update += 1
-                    continue
+def parse(response, paper_versions, replace_version=True):
+    def _get_entry_data(entry):
+        home_link = entry['links'][0]['href'].strip()
+        pdf_link = entry['links'][-1]['href'].strip()
+        paper_id, paper_version = (lambda pdf_links: (
+            pdf_links[0], int(pdf_links[-1])))(pdf_link.split('/')[-1].split('v'))
+        updated_date = datetime.strptime(
+            entry['updated'], '%Y-%m-%dT%H:%M:%SZ')
+        tags = [tag['term'] for tag in entry.tags]
+        authors = [author['name'] for author in entry['authors']]
+        published_date = datetime.strptime(
+            entry['published'], '%Y-%m-%dT%H:%M:%SZ')
+        summary = entry['summary'].strip()
+        title = entry['title'].strip()
 
-            self.available_ids.add(paper_id)
-            self.paper_versions[paper_id] = int(paper_version)
+        entry_contents = {
+            'paper_id': paper_id,
+            'title': title,
+            'latest_version': paper_version,
+            'summary': summary,
+            'authors': authors,
+            'pdf': pdf_link,
+            'home': home_link,
+            'tags': tags,
+            'published_date': published_date,
+            'updated_date': updated_date
+        }
+        return entry_contents
 
-            tags = [tag['term'] for tag in entry.tags]
-            authors = [author['name'] for author in entry['authors']]
-            published_date = datetime.strptime(entry['published'], '%Y-%m-%dT%H:%M:%SZ')
-            summary = entry['summary']
-            title = entry['title']
+    update = 0
+    indb = 0
+    insert = 0
+    commit_buffer = []
+    versions_buffer = paper_versions
+    available_ids = set(versions_buffer.keys())
+    for entry in response.entries:
+        entry_contents = _get_entry_data(entry)
+        paper_version = entry_contents['latest_version']
+        paper_id = entry_contents['paper_id']
 
-            insert_papers.append({'paper_id': paper_id.strip(),
-                                  'title': title.strip(),
-                                  'latest_version': int(paper_version),
-                                  'summary': summary.strip(),
-                                  'authors': authors,
-                                  'pdf': pdf_link.strip(),
-                                  'home': home_link.strip(),
-                                  'tags': tags,
-                                  'published_date': published_date,
-                                  'updated_date': updated_date})
-
-        print(f"Fetched: {len(parsed_response.entries)} In DB: {indb} Update: {len(update_papers)} Insert: {len(insert_papers)}")
-
-        assert len(insert_papers) == len(parsed_response.entries) - indb - len(update_papers)
-        assert len(update_papers) == update
-
-        if len(insert_papers) == 0 and len(update_papers) == 0:
-            print("All papers already in database.Quitting...")
-            self.stop_call = True
-
-        return insert_papers, update_papers, pause
-
-    def updateToDb(self):
-        papers_db = self.connection.arxivdl.papers
-        updated_papers = 0
-        if len(self.insert_papers) != 0:
-            insert_results = papers_db.insert_many(self.insert_papers)
-            updated_papers += len(insert_results.inserted_ids)
-
-        if updated_papers > 0:
-            self.updated = True
-        print(f"Inserted {updated_papers} papers to database")
-
-        updated_papers = 0
-        if len(self.update_papers) != 0:
-            for paper_id, paper in self.update_papers.items():
-                update_results = papers_db.update_one({'paper_id': paper_id}, {'$set': paper})
-                updated_papers += update_results.modified_count
-
-        if updated_papers > 0:
-            self.updated = True
-        print(f"Updated {updated_papers} papers in database")
-
-    def pause(self, counter=None):
-        if not counter:
-            counter = self.counter
-        print(f"Fetching Paused due to rate limiting.Sleeping for {counter} minutes")
-        minutes = counter
-        seconds = 0
-        print("\n")
-        while minutes != -1:
-            sys.stdout.write(f"\rTime left : {minutes:02d}:{seconds:02d}")
-            time.sleep(1)
-            if seconds == 0:
-                minutes -= 1
-                seconds = 59
+        if paper_id in available_ids:
+            if paper_version <= paper_versions[paper_id]:
+                indb += 1
+                continue
             else:
-                seconds -= 1
-        print("\n")
-
-    def stop(self):
-        print("Closing database connections\n")
-        if self.connection is not None:
-            self.connection.close()
-
-
-class InvalidResponse(Exception):
-    pass
+                commit_buffer.append({**entry_contents, 'update': True})
+                versions_buffer[paper_id] = paper_versions
+                update += 1
+                continue
+        versions_buffer[paper_id] = paper_version
+        available_ids.add(paper_id)
+        commit_buffer.append({**entry_contents})
+        insert += 1
+    fetch_logger.info(
+        f"Parsing Stats - Total={len(commit_buffer)} :: In DB={indb} :: Update Entries={update} :: Insert Entries={insert}")
+    return commit_buffer, versions_buffer

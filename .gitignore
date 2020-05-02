@@ -1,0 +1,8 @@
+.ipynb_checkpoints/
+.vscode/
+Arxiv.ipynb
+__pycache__/
+_fetch.py
+*.log
+my_module.py
+instructions.txt
