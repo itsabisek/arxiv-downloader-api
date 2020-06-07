@@ -1,10 +1,10 @@
-from fetch import fetch_wrapper, parse_wrapper, get_parsed_response
-from db_utils import get_db_handle, bulk_insert_or_update
-from timer_utils import Timer
-from redis_utils import RQHelper, RedisHelper
-from redis import Redis
-from logger_utils import bootstrap_logger
 import argparse
+import os
+from src.fetch import Arxiv
+from utils.timer_utils import Timer
+from utils.redis_utils import RQHelper, RedisHelper, PAUSE_SIGNAL, STOP_SIGNAL
+from utils.logger_utils import bootstrap_logger
+
 
 main_logger = bootstrap_logger(__name__)
 
@@ -26,61 +26,65 @@ def parse_set_information():
         return set_data
 
 
-def enque_parse_db_job(rq_helper, response_buffer, replace_version):
-    if response_buffer:
-        main_logger.info(
-            f"Found {len(response_buffer)} reponses to parse. Will enque them all")
-        parse_results = rq_helper.enqueue_new_job(
-            parse_wrapper, response_buffer, replace_version=replace_version)
+def start_driver(set_data, papers_per_call=1000, retries=5, replace_version=True, first_run=False):
+    def _get_stop_signal():
+        return redis_helper.signal_state(STOP_SIGNAL)
 
-        with get_db_handle() as db_handle:
-            main_logger.info(
-                f"Enqueing db update call for parsed_results - {len(parse_results.result)} results")
+    def _get_pause_signal():
+        return redis_helper.signal_state(PAUSE_SIGNAL)
 
-            db_result = rq_helper.enqueue_new_job(
-                bulk_insert_or_update, depends_on=parse_results, commit_buffer=parse_results.result)
+    main_logger.info("Checking for mongo environment variables")
+    if not os.environ.get('MONGO_USERNAME', '') or not os.environ.get('MONGO_PASSWORD', ''):
+        print(os.environ.items())
+        main_logger.error("Mongo DB variables not found in environment variables.")
+        return False
 
-
-def start_driver(set_data, papers_per_call=1000, retries=5, replace_version=True):
-    main_logger.info(
-        f"Driver Stats - Papers per call={papers_per_call} :: Retries={retries} :: Replace version={replace_version} :: No of Sets={len(set_data.keys())}")
+    main_logger.info(f"Driver Stats - Papers per call={papers_per_call} :: Retries={retries} :: Replace version={replace_version} :: No of Sets={len(set_data.keys())}")
     try:
         redis_helper = RedisHelper()
+        redis_helper.set_signals(PAUSE_SIGNAL, STOP_SIGNAL, value=0)
+        if first_run:
+            redis_helper.clear_all_keys()
+
         rq_helper = RQHelper(redis_helper.get_redis_connection())
+
+        timer = Timer(retries=retries, redis_helper=redis_helper)
+
+        arxiv = Arxiv(redis_helper, papers_per_call=papers_per_call,
+                      replace_version=replace_version)
+
         if not redis_helper or not rq_helper:
-            main_logger.error("Redis / RQ worker could not be instantiated")
-            raise Exception("Error instantiating Redis connection")
-        start_index = 0
+            raise Exception("Error instantiating Redis/ RQ worker connection")
+
+        index = 0
 
         for set_num, data in set_data.items():
-            timer = Timer()
-            response_buffer = []
-            main_logger.info(
-                f"Getting data for Set {set_num} :: Categories {data.values()}")
-            while not timer.timeout():
-                main_logger.info(
-                    f"Fetching... index={start_index} :: papers_per_call={papers_per_call}")
-                parsed_response, pause_fetch, stop_fetch = fetch_wrapper(
-                    data.keys(), start_index, papers_per_call)
-                if pause_fetch:
-                    main_logger.info("Got empty response ")
-                    enque_parse_db_job(rq_helper,
-                                       response_buffer, replace_version)
+
+            main_logger.info(f"Getting data for Set {set_num} :: Categories {data.keys()}")
+
+            while not _get_stop_signal():
+                main_logger.info(f"Fetching... index={index} :: papers_per_call={papers_per_call}")
+
+                run_success = arxiv.run_once(data.keys(), index)
+                if not run_success:
+                    return False
+
+                if _get_pause_signal():
+                    main_logger.info("Got empty response. Starting Timer....")
+
+                    rq_helper.enqueue_db_job()
+
                     if timer.timeout():
-                        main_logger.warn(
-                            "Timer Timedout. Will stop getting data for current set")
+                        main_logger.warning("Timer Timeout. Will stop getting data for current set")
                         break
                     timer.start()
                     continue
-                if stop_fetch:
-                    main_logger.warn(f"All papers for set {set_num} fetched.")
-                    timer.set_timeout()
 
-                response_buffer.append(parsed_response)
-                start_index += papers_per_call
+                index += papers_per_call
+                timer.reset()
 
-            enque_parse_db_job(rq_helper,
-                               response_buffer, replace_version)
+            rq_helper.enqueue_db_job()
+
         return True
     except Exception as e:
         main_logger.exception(f"Exception occured while running driver - {e}")
@@ -91,6 +95,7 @@ if __name__ == '__main__':
     papers_per_call = 1000
     replace_version = True
     retries = 5
+    first_run = False
 
     arg_parser = argparse.ArgumentParser(
         description="Get, parse and store arxiv paper metadata")
@@ -100,6 +105,8 @@ if __name__ == '__main__':
                             help="Number of retries before stopping for a set")
     arg_parser.add_argument('--replace', action='store_true', dest='replace_version',
                             help="Replace old version of a paper with a newer version")
+    arg_parser.add_argument('--firstrun', action='store_true', dest='first_run',
+                            help="Runs the process by clearing all previous data available")
 
     args = arg_parser.parse_args()
     if args.papers_per_call:
@@ -108,7 +115,10 @@ if __name__ == '__main__':
         retries = args.retries
     if args.replace_version:
         replace_version = args.replace_version
+    if args.first_run:
+        first_run = args.first_run
 
     set_data = parse_set_information()
-    success = start_driver(set_data, papers_per_call, retries, replace_version)
-    print(f"Success = {success}")
+    success = start_driver(set_data, papers_per_call,
+                           retries, replace_version, first_run)
+    main_logger.info(f"Success = {success}")

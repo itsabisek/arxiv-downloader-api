@@ -1,10 +1,10 @@
 import logging
 
 
-def bootstrap_logger(name):
+def bootstrap_logger(name, logfile='error.log'):
     formatter = logging.Formatter(
-        "%(asctime)s %(name)s [%(levelname)s] - %(message)s")
-    handler = logging.FileHandler('error.log')
+        "%(asctime)s %(filename)s (%(funcName)s, %(lineno)d) [%(levelname)s] - %(message)s")
+    handler = logging.FileHandler(f'logs/{logfile}')
     handler.setFormatter(formatter)
 
     logger = logging.getLogger(name)
