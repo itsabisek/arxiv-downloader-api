@@ -8,6 +8,7 @@ from utils.logger_utils import bootstrap_logger
 db_logger = bootstrap_logger(__name__)
 
 CONNECTION_STRING = 'mongodb+srv://%s:%s@cluster0-fiaze.mongodb.net/arxivdl?authSource=admin&retryWrites=true&w=majority'
+MIN_COMMIT_SIZE_TO_INSERT = 10000
 
 
 def get_db_handle(collection_name='papers'):

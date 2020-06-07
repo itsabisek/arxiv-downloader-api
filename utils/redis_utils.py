@@ -1,7 +1,7 @@
 from redis import Redis
 import traceback
 from rq import Worker, Queue
-from utils.db_utils import bulk_insert_or_update_wrapper
+from utils.db_utils import bulk_insert_or_update_wrapper, MIN_COMMIT_SIZE_TO_INSERT
 from utils.logger_utils import bootstrap_logger
 
 redis_logger = bootstrap_logger(__name__)
@@ -33,9 +33,9 @@ class RQHelper:
         except Exception as e:
             redis_logger.exception(e)
 
-    def enqueue_db_job(self):
+    def enqueue_db_job(self, force_insert=False):
         temp_commit_buffer = self.redis_conn.lrange(COMMIT_BUFFER, 0, -1)
-        if temp_commit_buffer:
+        if temp_commit_buffer and (force_insert or len(temp_commit_buffer) >= MIN_COMMIT_SIZE_TO_INSERT):
             redis_logger.info(f"Found {len(temp_commit_buffer)} responses to commit. Will enque them all")
             self.enqueue_new_job(bulk_insert_or_update_wrapper,
                                  commit_buffer=temp_commit_buffer)
@@ -80,8 +80,8 @@ class RedisHelper:
         if not args and not kwargs:
             return
         value = kwargs.get('value', None)
-        values = kwargs.get('values', [])
-        if not value and not values:
+        values = kwargs.get('values', None)
+        if value is None and values is None:
             return
 
         for index, var in enumerate(args):

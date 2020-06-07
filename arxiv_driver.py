@@ -42,7 +42,7 @@ def start_driver(set_data, papers_per_call=1000, retries=5, replace_version=True
     main_logger.info(f"Driver Stats - Papers per call={papers_per_call} :: Retries={retries} :: Replace version={replace_version} :: No of Sets={len(set_data.keys())}")
     try:
         redis_helper = RedisHelper()
-        redis_helper.set_signals(PAUSE_SIGNAL, STOP_SIGNAL, value=0)
+
         if first_run:
             redis_helper.clear_all_keys()
 
@@ -59,6 +59,7 @@ def start_driver(set_data, papers_per_call=1000, retries=5, replace_version=True
         index = 0
 
         for set_num, data in set_data.items():
+            redis_helper.set_signals(PAUSE_SIGNAL, STOP_SIGNAL, value=0)
 
             main_logger.info(f"Getting data for Set {set_num} :: Categories {data.keys()}")
 
@@ -83,7 +84,7 @@ def start_driver(set_data, papers_per_call=1000, retries=5, replace_version=True
                 index += papers_per_call
                 timer.reset()
 
-            rq_helper.enqueue_db_job()
+            rq_helper.enqueue_db_job(force_insert=True)
 
         return True
     except Exception as e:
