@@ -3,6 +3,7 @@
 Arxiv.ipynb
 __pycache__/
 _fetch.py
-*.log
+logs/*
+categories_test.txt
 my_module.py
 instructions.txt
