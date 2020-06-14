@@ -56,11 +56,9 @@ def start_driver(set_data, papers_per_call=1000, retries=5, replace_version=True
         if not redis_helper or not rq_helper:
             raise Exception("Error instantiating Redis/ RQ worker connection")
 
-        index = 0
-
         for set_num, data in set_data.items():
             redis_helper.set_signals(PAUSE_SIGNAL, STOP_SIGNAL, value=0)
-
+            index = 0
             main_logger.info(f"Getting data for Set {set_num} :: Categories {data.keys()}")
 
             while not _get_stop_signal():

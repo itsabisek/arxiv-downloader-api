@@ -2,8 +2,7 @@ import requests
 import feedparser
 import json
 from datetime import datetime
-from utils.timer_utils import Timer
-from utils.redis_utils import RedisHelper, STOP_SIGNAL, PAUSE_SIGNAL
+from utils.redis_utils import STOP_SIGNAL, PAUSE_SIGNAL
 from utils.logger_utils import bootstrap_logger
 
 fetch_logger = bootstrap_logger(__name__)
@@ -34,8 +33,11 @@ class Arxiv:
             return True
 
         commit_buffer = self.parse_wrapper(parsed_response)
-        update_success = self.redis_helper.update_commit_buffer(commit_buffer)
-        return update_success
+        commit_buffer_length = self.redis_helper.update_commit_buffer(commit_buffer)
+        fetch_logger.info(f"Commit Buffer length = {commit_buffer_length}")
+        if commit_buffer_length is False:
+            return False
+        return True
 
     def fetch_wrapper(self, categories, index):
         category_list = [categories] if isinstance(
@@ -48,7 +50,7 @@ class Arxiv:
 
     def _fetch(self, category_string, index):
         response = None
-        base_url = self.BASE_URL
+        base_url = Arxiv.BASE_URL
         query_string = f"search_query={category_string}&start={index}&sortBy=lastUpdatedDate&max_results={self.papers_per_call}"
         raw_url = base_url+query_string
         fetch_logger.info(f"Fetching data for url - {raw_url}")
@@ -67,7 +69,7 @@ class Arxiv:
             pause_fetch = 0
             if len(response.entries) == 0:
                 pause_fetch = 1
-            if len(response.entries) < self.papers_per_call and len(response.entries) > 0:
+            if self.papers_per_call > len(response.entries) > 0:
                 stop_fetch = 1
             fetch_logger.info(f"Fetched {len(response.entries)} entries")
             return response, pause_fetch, stop_fetch, len(response.entries)
@@ -101,8 +103,6 @@ class Arxiv:
                         commit_buffer.extend(temp_commit_buffer)
                     else:
                         self.redis_helper.send_stop_signal()
-
-                fetch_logger.info(f"Commit Buffer length = {len(commit_buffer)}")
                 return commit_buffer
 
             except Exception as e:

@@ -1,8 +1,8 @@
 from redis import Redis
-import traceback
 from rq import Worker, Queue
 from utils.db_utils import bulk_insert_or_update_wrapper, MIN_COMMIT_SIZE_TO_INSERT
 from utils.logger_utils import bootstrap_logger
+import os
 
 redis_logger = bootstrap_logger(__name__)
 
@@ -11,6 +11,8 @@ STOP_SIGNAL = 'stop'
 GLOBAL_KEY = 'globals'
 COMMIT_BUFFER = 'buffer'
 VERSIONS_KEY = 'paper_versions'
+MONGO_USERNAME = os.environ.get('MONGO_USERNAME', '')
+MONGO_PASSWORD = os.environ.get('MONGO_PASSWORD', '')
 
 
 class RQHelper:
@@ -34,12 +36,13 @@ class RQHelper:
             redis_logger.exception(e)
 
     def enqueue_db_job(self, force_insert=False):
-        temp_commit_buffer = self.redis_conn.lrange(COMMIT_BUFFER, 0, -1)
-        if temp_commit_buffer and (force_insert or len(temp_commit_buffer) >= MIN_COMMIT_SIZE_TO_INSERT):
-            redis_logger.info(f"Found {len(temp_commit_buffer)} responses to commit. Will enque them all")
-            self.enqueue_new_job(bulk_insert_or_update_wrapper,
-                                 commit_buffer=temp_commit_buffer)
-            self.redis_conn.delete(COMMIT_BUFFER)
+        if MONGO_USERNAME and MONGO_PASSWORD:
+            temp_commit_buffer = self.redis_conn.lrange(COMMIT_BUFFER, 0, -1)
+            if temp_commit_buffer and (force_insert or len(temp_commit_buffer) >= MIN_COMMIT_SIZE_TO_INSERT):
+                redis_logger.info(f"Found {len(temp_commit_buffer)} responses to commit. Will enque them all")
+                self.enqueue_new_job(bulk_insert_or_update_wrapper,
+                                     commit_buffer=temp_commit_buffer)
+                self.redis_conn.delete(COMMIT_BUFFER)
 
     def enqueue_new_job(self, service_function, *args, **kwargs):
         result = None
@@ -126,7 +129,7 @@ class RedisHelper:
         try:
             if commit_buffer:
                 self.redis_conn.lpush(COMMIT_BUFFER, *commit_buffer)
-            return True
+            return self.redis_conn.llen(COMMIT_BUFFER)
         except Exception as e:
             redis_logger.exception('Exception occured while updating - %s ', e)
             return False
