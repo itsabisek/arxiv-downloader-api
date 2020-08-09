@@ -7,5 +7,5 @@ logs/*
 categories_test.txt
 my_module.py
 instructions.txt
-.idea
+.idea/
 
