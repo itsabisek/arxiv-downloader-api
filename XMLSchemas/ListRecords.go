@@ -1,11 +1,6 @@
-package arxivharvester
+package xmlschemas
 
 import "encoding/xml"
-
-type RootTag struct {
-	XMLName     xml.Name    `xml:"OAI-PMH"`
-	ListRecords ListRecords `xml:"ListRecords"`
-}
 
 type ListRecords struct {
 	XMLName         xml.Name        `xml:"ListRecords"`
@@ -44,11 +39,4 @@ type Version struct {
 	XMLName xml.Name `xml:"version"`
 	Vno     string   `xml:"version,attr"`
 	Date    string   `xml:"date"`
-}
-
-type ResumptionToken struct {
-	XMLName      xml.Name `xml:"resumptionToken"`
-	Value        string   `xml:",chardata"`
-	Cursor       int      `xml:"cursor,attr"`
-	CompleteSize int      `xml:"completeListSize,attr"`
 }

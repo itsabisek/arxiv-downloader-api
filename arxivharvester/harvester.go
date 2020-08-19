@@ -1,18 +1,20 @@
 package arxivharvester
 
 import (
-	"encoding/xml"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"reflect"
+	"strconv"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	xmlschemas "github.com/itsabisek/arxiv/XMLSchemas"
+	"github.com/itsabisek/arxiv/utils"
 )
 
 const (
-	numRetries   = 3
+	numRetries   = 5
 	statusCodeOK = 200
 )
 
@@ -20,24 +22,25 @@ type Harvester struct {
 	parameters       *Parameters
 	baseURL          string
 	requestType      string
-	resumptionToken  *ResumptionToken
+	resumptionToken  *xmlschemas.ResumptionToken
 	client           http.Client
 	requestObject    *http.Request
 	completeListSize int
 	currentSize      int
-	redisDB          *redis.Client
+	redisWrapper     *utils.RedisWrapper
 }
 
-func InitializeHarvester(rdb *redis.Client) *Harvester {
+func InitializeHarvester(redisWrapper *utils.RedisWrapper) *Harvester {
 	var harvester *Harvester = new(Harvester)
 	harvester.requestObject = nil
-	harvester.redisDB = nil
-	harvester.baseURL = ArxivOaiBaseURL
-	harvester.requestType = GetRequest
+	harvester.redisWrapper = nil
+	harvester.resumptionToken = new(xmlschemas.ResumptionToken)
+	harvester.baseURL = utils.ArxivOaiBaseURL
+	harvester.requestType = utils.GetRequest
 	harvester.completeListSize = -1
 	harvester.currentSize = 0
 	harvester.client = http.Client{Timeout: time.Duration(20 * time.Second)}
-	harvester.redisDB = rdb
+	harvester.redisWrapper = redisWrapper
 	harvester.parameters = InitializeParameters()
 	return harvester
 }
@@ -89,6 +92,58 @@ func (harvester *Harvester) isResumptionTokenPresent() bool {
 	return false
 }
 
+func (harvester *Harvester) String() string {
+	var tempMap = make(map[string]string)
+	tempMap["parameters"] = harvester.parameters.String()
+	tempMap["resumptionToken"] = harvester.resumptionToken.String()
+	tempMap["base_url"] = harvester.baseURL
+	tempMap["request_type"] = harvester.requestType
+	tempMap["current_size"] = strconv.Itoa(harvester.currentSize)
+	tempMap["complete_size"] = strconv.Itoa(harvester.completeListSize)
+
+	harvesterString, err := json.Marshal(tempMap)
+	if err != nil {
+		panic(err)
+	}
+	return string(harvesterString)
+}
+
+func (harvester *Harvester) LoadFromMap(referrer map[string]string) {
+	harvester.baseURL = referrer["base_url"]
+	harvester.requestType = referrer["request_type"]
+	harvester.currentSize, _ = strconv.Atoi(referrer["current_size"])
+	harvester.completeListSize, _ = strconv.Atoi(referrer["complete_size"])
+}
+
+func (harvester *Harvester) SetHarvestParametersFromRedis() {
+	var payload, referrer map[string]string
+	tempPayload := harvester.redisWrapper.PopFromRequest()
+
+	json.Unmarshal([]byte(tempPayload), &payload)
+	json.Unmarshal([]byte(payload["referrer"]), &referrer)
+	fmt.Println("Harvester Payload ", payload)
+	harvester.LoadFromMap(referrer)
+	harvester.parameters.ParseString(referrer["parameters"])
+	if len(referrer["resumptionToken"]) > 0 {
+		harvester.resumptionToken.ParseString(referrer["resumptionToken"])
+	}
+	harvester.updateResumptionTokenParam()
+}
+
+func (harvester *Harvester) pushToParserWrapper(respBody []byte) {
+	var tempPayload = make(map[string]string)
+	tempPayload["referrer"] = harvester.String()
+	tempPayload["response"] = string(respBody)
+
+	payload, err := json.Marshal(tempPayload)
+	if err != nil {
+		panic(err)
+	}
+
+	harvester.redisWrapper.PushToParser(string(payload), *harvester.parameters.Set)
+
+}
+
 func (harvester *Harvester) buildRequestObj() {
 	if harvester.requestObject == nil {
 		fmt.Println("Request Obj not cached. Creating a new one")
@@ -122,9 +177,6 @@ func (harvester *Harvester) makeHTTPRequest() (*http.Response, error) {
 	var resp *http.Response = nil
 
 	harvester.buildRequestObj()
-	if err != nil {
-		panic("Error creating req object. Exiting...")
-	}
 	for i := 1; i <= numRetries; i++ {
 		fmt.Println("Retry #", i, " - Making request to ", harvester.requestObject.URL.String())
 		resp, err = harvester.client.Do(harvester.requestObject)
@@ -142,57 +194,16 @@ func (harvester *Harvester) makeHTTPRequest() (*http.Response, error) {
 	return resp, err
 }
 
-func (harvester *Harvester) updateHarvesterParams(respBody []byte) {
-	xmlTree := RootTag{}
-	xml.Unmarshal(respBody, &xmlTree)
-	harvester.resumptionToken = &xmlTree.ListRecords.ResumptionToken
-	if len(harvester.resumptionToken.Value) > 0 {
-		harvester.updateResumptionTokenParam()
-		harvester.currentSize += len(xmlTree.ListRecords.Records)
-		if harvester.completeListSize == 0 {
-			harvester.completeListSize = harvester.resumptionToken.CompleteSize
-		}
-	}
-
-}
-
-func (harvester *Harvester) StartHarvesting() {
-	fmt.Println("Harvesting Metadata...")
+func (harvester *Harvester) HarvestOnce() {
+	fmt.Println("Requesting Metadata for ", *harvester.parameters.Set)
 	startTime := time.Now()
-	for harvester.currentSize != harvester.completeListSize {
-		resp, err := harvester.makeHTTPRequest()
-		if err != nil {
-			panic(err)
-		}
-
-		respBody, _ := ioutil.ReadAll(resp.Body)
-		harvester.uploadXMLDataToRedis(respBody)
-
-		resp.Body.Close()
-
-		harvester.updateHarvesterParams(respBody)
-		fmt.Printf("\nHarvester Stats- Set - %s  :: Cursor - %d :: CompleteListSize - %d :: CurrnetListSize - %d :: ResumptionToken - %s\n\n",
-			*harvester.parameters.Set, harvester.resumptionToken.Cursor, harvester.resumptionToken.CompleteSize, harvester.currentSize, harvester.resumptionToken.Value)
-		// TODO: Push the XML body to a central redis queue over here
-		if !(len(harvester.resumptionToken.Value) > 0) {
-			fmt.Println("No resumption token found")
-			if harvester.currentSize == harvester.completeListSize {
-				fmt.Println("All Entries Harvested. Exiting...")
-			} else {
-				fmt.Println("The API imposed Rate Limitations. Sleeping for 30 secs before trying again")
-				time.Sleep(time.Duration(30) * time.Second)
-			}
-		}
-
-	}
-	fmt.Println("Metadata Harvesting complete for", *harvester.parameters.Set, "Total Time taken - ", time.Now().Sub(startTime))
-
-}
-
-func (harvester *Harvester) uploadXMLDataToRedis(respBody []byte) {
-	ctx := harvester.redisDB.Context()
-	err := harvester.redisDB.Set(ctx, "Body", string(respBody[:]), 0).Err()
+	resp, err := harvester.makeHTTPRequest()
 	if err != nil {
-		panic(fmt.Sprintln("Error while uploading data to redis - ", err))
+		panic(err)
 	}
+	defer resp.Body.Close()
+
+	respBody, _ := ioutil.ReadAll(resp.Body)
+	harvester.pushToParserWrapper(respBody)
+	fmt.Println("Request completed successfully for ", *harvester.parameters.Set, " | Total Time taken - ", time.Now().Sub(startTime))
 }

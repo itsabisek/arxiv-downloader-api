@@ -1,9 +1,4 @@
-package arxivharvester
-
-import (
-	"encoding/xml"
-	"reflect"
-)
+package utils
 
 // VerbFor : Verb Mapping
 var VerbFor = map[string]string{"GET_RECORD": "GetRecord", "IDENTIFY": "Identify", "LIST_IDENTIFIERS": "ListIdentifiers",
@@ -19,6 +14,3 @@ const (
 	PostRequest     = "POST"
 	EmptyString     = ""
 )
-
-var TypeRegistry = map[string]interface{}{"string": reflect.TypeOf((*string)(nil)).Elem(), "int32": reflect.TypeOf((*string)(nil)).Elem(),
-	"xml.Name": reflect.TypeOf(xml.Name{})}
