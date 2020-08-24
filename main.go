@@ -1,9 +1,3 @@
-// This is the main package that starts the harvesting using the harvester
-// Step 1 - Queue up requests for multiple sets into the key - queue:oai_requests
-// Step 2 - Start Consuming those requests and put the xml in the key - queue:oai_xml_parser_<parser_no>
-// Step 3 - Put back the request obj into - queue:oai_requests
-// Step 4 - Start 5 parser goroutines which constantly poll the respective parser queues
-
 package main
 
 import (
@@ -19,29 +13,38 @@ import (
 var ctx = context.Background()
 
 func main() {
+	fmt.Println("Initializing Redis Server...")
 	redisWrapper := utils.InitializeCentralRedis()
-	redisWrapper.SetRequestQueue("queue:oai_requests")
-	redisWrapper.SetParserQueues("queue:oai_xml_parser", 5)
+	fmt.Println("Clearing all keys by tag arxiv")
+	keysDeleted := redisWrapper.ClearAllKeysByTag("arxiv")
+	fmt.Println("Deleted ", keysDeleted, " key(s) from central redis")
+	redisWrapper.SetRequestQueue("arxiv:queue:oai_requests")
+	redisWrapper.SetParserQueues("arxiv:queue:oai_xml_parser", 5)
+	fmt.Println("Stopping harvester polling until bootstraping complete!!")
 	redisWrapper.StopHarvesterPolling()
 	wgHarvester := &sync.WaitGroup{}
 	wgParser := &sync.WaitGroup{}
-	wgHarvester.Add(1)
-	wgParser.Add(5)
 	var harvester *arxivharvester.Harvester = arxivharvester.InitializeHarvester(redisWrapper)
 	var parsers []*arxivharvester.Parser = createParsers(redisWrapper, 5)
+	fmt.Println("Creating new parser and request queues...")
 	for _, parser := range parsers {
+		wgParser.Add(1)
 		go initializeParserPolling(redisWrapper, parser, wgParser)
+		time.Sleep(time.Duration(5) * time.Second)
 	}
+	wgHarvester.Add(1)
 	go intializeHarvesterPolling(redisWrapper, harvester, wgParser)
-	sets := []string{"cs"}
-	verb := utils.VerbFor["LIST_RECORDS"]
-	bootstrapHarvesting(harvester, redisWrapper, sets, verb)
+	bootstrapHarvesting(harvester, redisWrapper)
 	wgHarvester.Wait()
 	wgParser.Wait()
 }
 
 func intializeHarvesterPolling(redisWrapper *utils.RedisWrapper, harvester *arxivharvester.Harvester, wgHarvester *sync.WaitGroup) {
 	for {
+		if allSetsDone(redisWrapper) {
+			fmt.Println("All sets harvested. Stopped harvester polling")
+			break
+		}
 		// fmt.Println("Polling request queue")
 		if redisWrapper.ShouldPollHarvester() == "1" && redisWrapper.HasRequestsToHarvest() {
 			fmt.Println("Found request to harvest in ", redisWrapper.RequestQueue)
@@ -49,8 +52,28 @@ func intializeHarvesterPolling(redisWrapper *utils.RedisWrapper, harvester *arxi
 			harvester.HarvestOnce()
 		}
 		time.Sleep(time.Duration(15) * time.Second)
+
 	}
 	wgHarvester.Done()
+}
+
+func initializeParserPolling(redisWrapper *utils.RedisWrapper, parser *arxivharvester.Parser, wgParser *sync.WaitGroup) {
+	var sleepTime int
+	for {
+		sleepTime = 20
+		if allSetsDone(redisWrapper) {
+			fmt.Println("All sets harvested. Stopped parser polling")
+			break
+		}
+		// fmt.Println("Polling parser queue no ", parser.ParserIndex)
+		if redisWrapper.HasRequestsToParse(parser.ParserIndex) {
+			fmt.Println("Found responses to parse in queue no. ", parser.ParserIndex)
+			parser.ParseOneFromRedis()
+			sleepTime = 5
+		}
+		time.Sleep(time.Duration(sleepTime) * time.Second)
+	}
+	wgParser.Done()
 }
 
 func createParsers(redisWrapper *utils.RedisWrapper, numParsers int) []*arxivharvester.Parser {
@@ -62,24 +85,40 @@ func createParsers(redisWrapper *utils.RedisWrapper, numParsers int) []*arxivhar
 	return parsers
 }
 
-func initializeParserPolling(redisWrapper *utils.RedisWrapper, parser *arxivharvester.Parser, wgParser *sync.WaitGroup) {
-	for {
-		// fmt.Println("Polling parser queue no ", parser.ParserIndex)
-		if redisWrapper.HasRequestsToParse(parser.ParserIndex) {
-			fmt.Println("Found responses to parse in queue no. ", parser.ParserIndex)
-			parser.ParseOneFromRedis()
-		}
-		time.Sleep(time.Duration(30) * time.Second)
+func allSetsDone(redisWrapper *utils.RedisWrapper) bool {
+	allSetValues := redisWrapper.GetAllSetValues()
+	if !(len(allSetValues) > 0) {
+		return false
 	}
-	wgParser.Done()
+	for _, v := range allSetValues {
+		if v == "0" {
+			return false
+		}
+	}
+	return true
 }
 
-func bootstrapHarvesting(harvester *arxivharvester.Harvester, redisWrapper *utils.RedisWrapper, set []string, verb string) {
-	harvester.SetVerb(verb)
-	fmt.Println("\nBootstrapping harvesting for ", len(set), " sets")
-	for _, setSpec := range set {
+func bootstrapHarvesting(harvester *arxivharvester.Harvester, redisWrapper *utils.RedisWrapper) {
+	var sets []string
+	harvester.SetVerb(utils.VerbFor["LIST_SETS"])
+	harvester.SetMetadataPrefix("")
+	harvester.HarvestOnce()
+	harvester.SetVerb(utils.VerbFor["LIST_RECORDS"])
+	harvester.SetMetadataPrefix(utils.MetaFormatFor["ARXIV_RAW"])
+	fmt.Println("Waiting for Set Info")
+	for {
+		sets = redisWrapper.GetAllSets()
+		if len(sets) > 0 {
+			break
+		}
+		time.Sleep(time.Duration(5) * time.Second)
+	}
+
+	fmt.Println("\nBootstrapping harvesting for ", len(sets), " sets")
+	for _, setSpec := range sets {
 		harvester.SetSet(setSpec)
 		harvester.HarvestOnce()
+		time.Sleep(time.Duration(15) * time.Second)
 	}
 	redisWrapper.SetHarvesterPolling()
 }

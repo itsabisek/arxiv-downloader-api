@@ -144,6 +144,17 @@ func (harvester *Harvester) pushToParserWrapper(respBody []byte) {
 
 }
 
+func (harvester *Harvester) RequeueRequest() {
+	var tempPayload = make(map[string]string)
+	referrer := harvester.String()
+	tempPayload["referrer"] = referrer
+	payload, err := json.Marshal(tempPayload)
+	if err != nil {
+		panic(err)
+	}
+	harvester.redisWrapper.PushToRequest(string(payload))
+}
+
 func (harvester *Harvester) buildRequestObj() {
 	if harvester.requestObject == nil {
 		fmt.Println("Request Obj not cached. Creating a new one")
@@ -182,6 +193,7 @@ func (harvester *Harvester) makeHTTPRequest() (*http.Response, error) {
 		resp, err = harvester.client.Do(harvester.requestObject)
 		if err != nil {
 			fmt.Println("Error while making the request. Trying Again - ", err)
+			harvester.client.Timeout = time.Duration(harvester.client.Timeout.Seconds() * float64(i))
 			continue
 		}
 		if resp.StatusCode != statusCodeOK {
@@ -199,7 +211,8 @@ func (harvester *Harvester) HarvestOnce() {
 	startTime := time.Now()
 	resp, err := harvester.makeHTTPRequest()
 	if err != nil {
-		panic(err)
+		fmt.Println("Error occured while making request for ", harvester.parameters.Set, " : ", err, " Requeueing")
+		harvester.RequeueRequest()
 	}
 	defer resp.Body.Close()
 

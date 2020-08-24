@@ -26,21 +26,35 @@ func InitializeParser(parserIndex int, redisWrapper *utils.RedisWrapper) *Parser
 
 func (parser *Parser) ParseOneFromRedis() {
 	var payload map[string]interface{}
+	var parameters, referrer map[string]string
 	var rootTag xmlschemas.RootTag
+	var setRoot xmlschemas.SetRoot
 	var queueData string = parser.redisWrapper.PopFromParser(parser.ParserIndex)
 	json.Unmarshal([]byte(queueData), &payload)
-	referrer := payload["referrer"].(string)
+
+	referrerPayload := payload["referrer"].(string)
+	json.Unmarshal([]byte(referrerPayload), &referrer)
+	json.Unmarshal([]byte(referrer["parameters"]), &parameters)
+
 	respBody := payload["response"].(string)
-	xml.Unmarshal([]byte(respBody), &rootTag)
-
-	updatedReferrer := parser.ExtractData(rootTag, referrer)
-
-	parser.UpdateHarvestParametersInRedis(updatedReferrer)
+	if parameters["verb"] == utils.VerbFor["LIST_SETS"] {
+		xml.Unmarshal([]byte(respBody), &setRoot)
+		parser.UpdateSetInfoInRedis(setRoot)
+	} else {
+		xml.Unmarshal([]byte(respBody), &rootTag)
+		updatedReferrer, isComplete := parser.ExtractData(rootTag, referrer, parameters)
+		if isComplete {
+			setInfo := map[string]string{parameters["set"]: "1"}
+			parser.redisWrapper.UpdateSetInfo(setInfo)
+		} else {
+			parser.UpdateHarvestParametersInRedis(updatedReferrer)
+		}
+	}
 
 }
 
 func (parser *Parser) UpdateHarvestParametersInRedis(updatedReferrer string) {
-	var tempPayload = make(map[string]interface{})
+	var tempPayload = make(map[string]string)
 	tempPayload["referrer"] = updatedReferrer
 	payload, err := json.Marshal(tempPayload)
 	if err != nil {
@@ -49,10 +63,18 @@ func (parser *Parser) UpdateHarvestParametersInRedis(updatedReferrer string) {
 	parser.redisWrapper.PushToRequest(string(payload))
 }
 
-func (parser *Parser) ExtractData(rootTag xmlschemas.RootTag, referrerPayload string) string {
-	var parameters, referrer map[string]string
-	json.Unmarshal([]byte(referrerPayload), &referrer)
-	json.Unmarshal([]byte(referrer["parameters"]), &parameters)
+func (parser *Parser) UpdateSetInfoInRedis(setRoot xmlschemas.SetRoot) {
+	var setInfo = make(map[string]string)
+	sets := setRoot.ListSets.Sets
+	fmt.Println("Found ", len(sets), " Sets")
+	for _, set := range sets {
+		setInfo[set.SetSpec] = "0"
+	}
+	parser.redisWrapper.UpdateSetInfo(setInfo)
+}
+
+func (parser *Parser) ExtractData(rootTag xmlschemas.RootTag, referrer map[string]string, parameters map[string]string) (string, bool) {
+	isComplete := false
 	records := rootTag.ListRecords.Records
 	resumptionToken := &rootTag.ListRecords.ResumptionToken
 	completeSize, _ := strconv.Atoi(referrer["complete_size"])
@@ -74,17 +96,19 @@ func (parser *Parser) ExtractData(rootTag xmlschemas.RootTag, referrerPayload st
 			referrer["resumptionToken"] = resumptionToken.String()
 		} else if !(len(resumptionToken.Value) > 0) && currentSize == completeSize {
 			fmt.Println("All records harvested and parsed for set ", parameters["set"])
+			isComplete = true
 		} else {
 			fmt.Println("No Resumption Token found. API rate limited. Requeing for set ", parameters["set"])
 		}
 	} else {
 		fmt.Println("No Resumption Token found. API rate limited. Requeing for set ", parameters["set"])
 	}
+
 	updatedReferrer, err := json.Marshal(referrer)
 	if err != nil {
 		panic(err)
 	}
 
-	return string(updatedReferrer)
+	return string(updatedReferrer), isComplete
 
 }
