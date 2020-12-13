@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -9,8 +8,6 @@ import (
 	"github.com/itsabisek/arxiv/arxivharvester"
 	"github.com/itsabisek/arxiv/utils"
 )
-
-var ctx = context.Background()
 
 func main() {
 	fmt.Println("Initializing Redis Server...")
@@ -41,12 +38,12 @@ func main() {
 
 func intializeHarvesterPolling(redisWrapper *utils.RedisWrapper, harvester *arxivharvester.Harvester, wgHarvester *sync.WaitGroup) {
 	for {
-		if allSetsDone(redisWrapper) {
+		if allSetsDone(redisWrapper) && !hasValuesInQueue(redisWrapper, "requests", -1) {
 			fmt.Println("All sets harvested. Stopped harvester polling")
 			break
 		}
 		// fmt.Println("Polling request queue")
-		if redisWrapper.ShouldPollHarvester() == "1" && redisWrapper.HasRequestsToHarvest() {
+		if redisWrapper.ShouldPollHarvester() == "1" && hasValuesInQueue(redisWrapper, "requests", -1) {
 			fmt.Println("Found request to harvest in ", redisWrapper.RequestQueue)
 			harvester.SetHarvestParametersFromRedis()
 			harvester.HarvestOnce()
@@ -61,12 +58,12 @@ func initializeParserPolling(redisWrapper *utils.RedisWrapper, parser *arxivharv
 	var sleepTime int
 	for {
 		sleepTime = 20
-		if allSetsDone(redisWrapper) {
+		if allSetsDone(redisWrapper) && !hasValuesInQueue(redisWrapper, "parser", parser.ParserIndex) {
 			fmt.Println("All sets harvested. Stopped parser polling")
 			break
 		}
 		// fmt.Println("Polling parser queue no ", parser.ParserIndex)
-		if redisWrapper.HasRequestsToParse(parser.ParserIndex) {
+		if hasValuesInQueue(redisWrapper, "parser", parser.ParserIndex) {
 			fmt.Println("Found responses to parse in queue no. ", parser.ParserIndex)
 			parser.ParseOneFromRedis()
 			sleepTime = 5
@@ -96,6 +93,13 @@ func allSetsDone(redisWrapper *utils.RedisWrapper) bool {
 		}
 	}
 	return true
+}
+
+func hasValuesInQueue(redisWrapper *utils.RedisWrapper, action string, parserIndex int) bool {
+	if action == "parser" {
+		return redisWrapper.GetParserQueueLength(parserIndex) != "0"
+	}
+	return redisWrapper.GetRequestQueueLength() != "0"
 }
 
 func bootstrapHarvesting(harvester *arxivharvester.Harvester, redisWrapper *utils.RedisWrapper) {

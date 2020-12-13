@@ -100,10 +100,10 @@ func (redisWrapper *RedisWrapper) PopFromRequest() string {
 	return rettext[0]
 }
 
-func (redisWrapper *RedisWrapper) HasRequestsToHarvest() bool {
+func (redisWrapper *RedisWrapper) GetRequestQueueLength() string {
 	rettext := runCommand(redisWrapper.RedisConn, &redisWrapper.Ctx, "LLEN", redisWrapper.RequestQueue)
 
-	return rettext[0] != "0"
+	return rettext[0]
 }
 
 func (redisWrapper *RedisWrapper) PopFromParser(parserIndex int) string {
@@ -126,11 +126,11 @@ func (redisWrapper *RedisWrapper) GetParserQueueNameFromIndex(index int) string 
 	return redisWrapper.ParserQueues[index]
 }
 
-func (redisWrapper *RedisWrapper) HasRequestsToParse(parserIndex int) bool {
+func (redisWrapper *RedisWrapper) GetParserQueueLength(parserIndex int) string {
 	queueName := redisWrapper.GetParserQueueNameFromIndex(parserIndex)
 	rettext := runCommand(redisWrapper.RedisConn, &redisWrapper.Ctx, "LLEN", queueName)
 
-	return rettext[0] != "0"
+	return rettext[0]
 }
 
 func (redisWrapper *RedisWrapper) UpdateSetInfo(setInfo map[string]string) {
